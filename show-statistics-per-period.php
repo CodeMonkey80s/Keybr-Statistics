@@ -91,16 +91,17 @@ function showHelp()
     echo "\n";
     echo "Example Usage: \n";
     echo "\n";
-    echo "$ php ".basename(__FILE__)." [--option=value]\n";
+    echo "$ php " . basename(__FILE__) . " [--option=value]\n";
     echo "\n";
-    echo "--filename=[filename] - JSON file downloaded from keybr.com/profile\n";
-    echo "--colors=1            - Show colored Graph\n";
-    echo "--graph=1             - Show Graph\n";
-    echo "--list=1              - Show List with results\n";
-    echo "--lessontype=auto     - Count only selected lesson type\n";
-    echo "--period=[week/morth] - Calculate only for selected period\n";
-    echo "--minwpm=80           - Show only for wpm more than value\n";
-    echo "--csv=1               - Output data to csv file\n";
+    echo "--filename=[filename]             - JSON file downloaded from keybr.com/profile\n";
+    echo "--colors=1                        - Show colored Graph\n";
+    echo "--graph=1                         - Show Graph\n";
+    echo "--list=1                          - Show List with results\n";
+    echo "--lessontype=auto                 - Count only selected lesson type\n";
+    echo "--period=[day/week/month/year]    - Calculate only for selected period\n";
+    echo "--date-after=Y/m/d                - Show only after this date\n";
+    echo "--minwpm=80                       - Show only for wpm more than value\n";
+    echo "--csv=1                           - Output data to csv file\n";
     echo "\n";
 }
 
@@ -131,6 +132,7 @@ function run()
     $minWPM = isset($arguments["minwpm"]) ? intval($arguments["minwpm"]) : false;
     $lessonType = isset($arguments["lessontype"]) ? $arguments["lessontype"] : "auto";
     $period = isset($arguments["period"]) ? $arguments["period"] : "month";
+    $dateAfter = isset($arguments["date-after"]) ? $arguments["date-after"] : false;
     $createCSV = isset($arguments["csv"]) ? $arguments["csv"] : false;
 
     if ($showHelp) {
@@ -162,20 +164,29 @@ function run()
 
     $statisticsPerPeriod = [];
 
+    $finalAverageWPM = 0;
+    $finalAverageErrors = 0;
+    $finalAccuracy = 0;
+    $numberOfSamples = 0;
     $samples = [];
     $currentDate = false;
     foreach ($json as $entry) {
-
         $timestamp = substr($entry->timeStamp, 0, 10);
         $datetime = DateTime::createFromFormat("Y-m-d", $timestamp);
+
+        if ($dateAfter) {
+            $datetime2 = DateTime::createFromFormat("Y/m/d", $dateAfter);
+            if ($datetime < $datetime2) continue;
+        }
+        
         if ($period=="year") {
             $date = $datetime->format("Y");
-        } else if ($period=="month") {
+        } elseif ($period=="month") {
             $date = $datetime->format("Y/m");
-        } else if ($period=="week") {
-            $weekNum = str_pad($datetime->format("z"), 3, "0", STR_PAD_LEFT);
-            $date = $datetime->format("Y")."/".$weekNum;
-        } else if ($period=="day") {
+        } elseif ($period=="week") {
+            $weekNum = str_pad($datetime->format("W"), 3, "0", STR_PAD_LEFT);
+            $date = $datetime->format("Y") . "/" . $weekNum;
+        } elseif ($period=="day") {
             $date = $datetime->format("Y/m/d");
         }
 
@@ -183,19 +194,26 @@ function run()
             $currentDate = $date;
         }
 
+        $finalAverageWPM += $entry->speed;
+        $finalAverageErrors += $entry->errors;
+        $numberOfSamples++;
+
         if ($entry->lessonType==$lessonType) {
             $samples[$currentDate][] = [
                 "speed"  => $entry->speed,
                 "errors" => $entry->errors,
             ];
         }
-
+        
         if ($currentDate!=false && $date!=$currentDate) {
             $currentDate = $date;
         }
     }
 
-    if (count($samples)>0) {
+    $finalAverageWPM = number_format($finalAverageWPM / $numberOfSamples / 5, 2);
+    $finalAverageErrors = number_format($finalAverageErrors / $numberOfSamples, 2);
+    
+    if (count($samples) > 0) {
         foreach ($samples as $date => $sample) {
             $statistics = calculateStatistics($sample, $date);
             $statisticsPerPeriod[] = $statistics;
@@ -222,14 +240,15 @@ function run()
     if ($showGraph) {
         $width = exec('tput cols');
         if ($width >= $consoleMinValue) {
-            echo "Console Width: {$width} (Displaying 'Mode WPM'), Max Value: {$graphMaxValue}\n\n";
+            //echo "Console Width: {$width} (Displaying 'Mode WPM'), Max Value: {$graphMaxValue}\n\n";
+            echo "Console Width: {$width} (Displaying 'Average WPM'), Max Value: {$graphMaxValue}\n\n";
             if (count($statisticsPerPeriod) > 0) {
                 foreach ($statisticsPerPeriod as $data) {
-                    if ($minWPM ==false || $minWPM && $data["mode_wpm"] >= $minWPM) {
+                    if ($minWPM==false || $data["average_wpm"] >= $minWPM) {
                         $date = $data["date"];
-                        $mode = $data["mode_wpm"];
+                        $wpm = $data["average_wpm"];
                         $errors = $data["average_errors"];
-                        $blocks = round($mode, 0, PHP_ROUND_HALF_UP);
+                        $blocks = round($wpm, 0, PHP_ROUND_HALF_UP);
                         if ($useColors) {
                             echo "\e[37m{$date} \e[90m:\e[0m ";
                         } else {
@@ -259,10 +278,15 @@ function run()
                     }
                 }
             }
+            echo "\n";
+            echo "     Speed : {$finalAverageWPM} WPM (Average)\n";
+            echo "    Errors : \e[91m{$finalAverageErrors}\e[0m\n";
+            //echo "  Accuracy : {$finalAccuracy} %\n";
         } else {
             echo "Console width ({$width}) is too small. Should be at least ({$consoleMinValue}). Graph is not displayed.\n";
         }
     }
+    echo "\n";
 }
 
 run();
